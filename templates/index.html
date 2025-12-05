@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Car Database Manager</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+</head>
+<body class="bg-gray-100 min-h-screen">
+    <div class="container mx-auto px-4 py-8">
+        <h1 class="text-3xl font-bold text-gray-800 mb-8">Car Database Manager</h1>
+        
+        <!-- Table Selector -->
+        <div class="mb-6">
+            <label class="block text-sm font-medium text-gray-700 mb-2">Select Table</label>
+            <select id="tableSelect" onchange="loadTable()" class="w-full md:w-64 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+                <option value="companies">Companies</option>
+                <option value="fuel_types">Fuel Types</option>
+                <option value="engines">Engines</option>
+                <option value="cars">Cars</option>
+                <option value="performance">Performance</option>
+            </select>
+        </div>
+
+        <!-- Search Bar -->
+        <div class="mb-6 flex gap-4">
+            <input type="text" id="searchInput" placeholder="Search..." 
+                class="flex-1 md:flex-none md:w-64 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+            <button onclick="searchTable()" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition">
+                Search
+            </button>
+            <button onclick="loadTable()" class="px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition">
+                Clear
+            </button>
+        </div>
+
+        <!-- Action Buttons -->
+        <div class="mb-6">
+            <button onclick="showAddModal()" class="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition">
+                + Add New Record
+            </button>
+            <button onclick="importCSV()" class="ml-2 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition">
+                Import CSV Data
+            </button>
+        </div>
+
+        <!-- Data Table -->
+        <div class="bg-white rounded-lg shadow overflow-hidden">
+            <div class="overflow-x-auto">
+                <table class="min-w-full divide-y divide-gray-200">
+                    <thead class="bg-gray-50">
+                        <tr id="tableHeader"></tr>
+                    </thead>
+                    <tbody id="tableBody" class="bg-white divide-y divide-gray-200"></tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Status Message -->
+        <div id="statusMessage" class="mt-4 hidden"></div>
+    </div>
+
+    <!-- Add/Edit Modal -->
+    <div id="modal" class="fixed inset-0 bg-black bg-opacity-50 hidden items-center justify-center z-50">
+        <div class="bg-white rounded-lg p-6 w-full max-w-md mx-4">
+            <h2 id="modalTitle" class="text-xl font-bold mb-4">Add Record</h2>
+            <form id="recordForm" class="space-y-4"></form>
+            <div class="flex justify-end gap-2 mt-6">
+                <button onclick="closeModal()" class="px-4 py-2 bg-gray-300 text-gray-700 rounded-lg hover:bg-gray-400 transition">
+                    Cancel
+                </button>
+                <button onclick="saveRecord()" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition">
+                    Save
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Table configurations
+        const tableConfigs = {
+            companies: {
+                fields: [
+                    { name: 'name', label: 'Company Name', type: 'text', required: true }
+                ],
+                displayFields: ['id', 'name']
+            },
+            fuel_types: {
+                fields: [
+                    { name: 'name', label: 'Fuel Type', type: 'text', required: true }
+                ],
+                displayFields: ['id', 'name']
+            },
+            engines: {
+                fields: [
+                    { name: 'type', label: 'Engine Type', type: 'text', required: true },
+                    { name: 'cc', label: 'CC (Displacement)', type: 'number', required: false },
+                    { name: 'horsepower', label: 'Horsepower', type: 'number', required: false },
+                    { name: 'torque', label: 'Torque (Nm)', type: 'number', required: false }
+                ],
+                displayFields: ['id', 'type', 'cc', 'horsepower', 'torque']
+            },
+            cars: {
+                fields: [
+                    { name: 'name', label: 'Car Name', type: 'text', required: true },
+                    { name: 'company_id', label: 'Company', type: 'select', required: true, options: 'companies' },
+                    { name: 'engine_id', label: 'Engine', type: 'select', required: false, options: 'engines' },
+                    { name: 'fuel_type_id', label: 'Fuel Type', type: 'select', required: false, options: 'fuel_types' },
+                    { name: 'price', label: 'Price (USD)', type: 'number', required: false },
+                    { name: 'seats', label: 'Seats', type: 'number', required: false }
+                ],
+                displayFields: ['id', 'name', 'company', 'price', 'seats', 'fuel_type']
+            },
+            performance: {
+                fields: [
+                    { name: 'car_id', label: 'Car', type: 'select', required: true, options: 'cars' },
+                    { name: 'top_speed', label: 'Top Speed (km/h)', type: 'number', required: false },
+                    { name: 'acceleration_0_100', label: '0-100 km/h (sec)', type: 'number', step: '0.1', required: false }
+                ],
+                displayFields: ['id', 'car_id', 'top_speed', 'acceleration_0_100']
+            }
+        };
+
+        let currentTable = 'companies';
+        let editingId = null;
+        let selectOptions = {};
+
+        // Initialize
+        document.addEventListener('DOMContentLoaded', () => {
+            loadTable();
+        });
+
+        async function loadTable() {
+            currentTable = document.getElementById('tableSelect').value;
+            try {
+                const response = await fetch(`/api/${currentTable}`);
+                const data = await response.json();
+                renderTable(data);
+                await loadSelectOptions();
+            } catch (error) {
+                showStatus('Error loading data: ' + error.message, 'error');
+            }
+        }
+
+        async function loadSelectOptions() {
+            // Load options for select fields
+            const tables = ['companies', 'fuel_types', 'engines', 'cars'];
+            for (const table of tables) {
+                try {
+                    const response = await fetch(`/api/${table}`);
+                    selectOptions[table] = await response.json();
+                } catch (error) {
+                    selectOptions[table] = [];
+                }
+            }
+        }
+
+        function renderTable(data) {
+            const config = tableConfigs[currentTable];
+            const headerRow = document.getElementById('tableHeader');
+            const tbody = document.getElementById('tableBody');
+
+            // Render header
+            headerRow.innerHTML = config.displayFields.map(field => 
+                `<th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">${field}</th>`
+            ).join('') + '<th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>';
+
+            // Render body
+            tbody.innerHTML = data.map(row => `
+                <tr class="hover:bg-gray-50">
+                    ${config.displayFields.map(field => 
+                        `<td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">${row[field] ?? '-'}</td>`
+                    ).join('')}
+                    <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                        <button onclick="editRecord(${row.id})" class="text-blue-600 hover:text-blue-900 mr-3">Edit</button>
+                        <button onclick="deleteRecord(${row.id})" class="text-red-600 hover:text-red-900">Delete</button>
+                    </td>
+                </tr>
+            `).join('');
+
+            if (data.length === 0) {
+                tbody.innerHTML = `<tr><td colspan="${config.displayFields.length + 1}" class="px-6 py-4 text-center text-gray-500">No records found</td></tr>`;
+            }
+        }
+
+        async function searchTable() {
+            const query = document.getElementById('searchInput').value;
+            if (!query.trim()) {
+                loadTable();
+                return;
+            }
+            try {
+                const response = await fetch(`/api/${currentTable}/search?q=${encodeURIComponent(query)}`);
+                const data = await response.json();
+                renderTable(data);
+            } catch (error) {
+                showStatus('Error searching: ' + error.message, 'error');
+            }
+        }
+
+        function showAddModal() {
+            editingId = null;
+            document.getElementById('modalTitle').textContent = 'Add New Record';
+            renderForm({});
+            document.getElementById('modal').classList.remove('hidden');
+            document.getElementById('modal').classList.add('flex');
+        }
+
+        async function editRecord(id) {
+            editingId = id;
+            try {
+                const response = await fetch(`/api/${currentTable}/${id}`);
+                const data = await response.json();
+                document.getElementById('modalTitle').textContent = 'Edit Record';
+                renderForm(data);
+                document.getElementById('modal').classList.remove('hidden');
+                document.getElementById('modal').classList.add('flex');
+            } catch (error) {
+                showStatus('Error loading record: ' + error.message, 'error');
+            }
+        }
+
+        function renderForm(data) {
+            const config = tableConfigs[currentTable];
+            const form = document.getElementById('recordForm');
+            
+            form.innerHTML = config.fields.map(field => {
+                let input;
+                if (field.type === 'select') {
+                    const options = selectOptions[field.options] || [];
+                    const optionsHtml = options.map(opt => {
+                        const label = opt.name || opt.type || `ID: ${opt.id}`;
+                        return `<option value="${opt.id}" ${data[field.name] == opt.id ? 'selected' : ''}>${label}</option>`;
+                    }).join('');
+                    input = `<select name="${field.name}" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500" ${field.required ? 'required' : ''}>
+                        <option value="">Select...</option>
+                        ${optionsHtml}
+                    </select>`;
+                } else {
+                    input = `<input type="${field.type}" name="${field.name}" value="${data[field.name] ?? ''}" 
+                        class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                        ${field.required ? 'required' : ''} ${field.step ? `step="${field.step}"` : ''}>`;
+                }
+                return `
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">${field.label}</label>
+                        ${input}
+                    </div>
+                `;
+            }).join('');
+        }
+
+        function closeModal() {
+            document.getElementById('modal').classList.add('hidden');
+            document.getElementById('modal').classList.remove('flex');
+        }
+
+        async function saveRecord() {
+            const form = document.getElementById('recordForm');
+            const formData = new FormData(form);
+            const data = {};
+            
+            for (const [key, value] of formData.entries()) {
+                if (value !== '') {
+                    data[key] = value;
+                }
+            }
+
+            try {
+                const url = editingId ? `/api/${currentTable}/${editingId}` : `/api/${currentTable}`;
+                const method = editingId ? 'PUT' : 'POST';
+                
+                const response = await fetch(url, {
+                    method,
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(data)
+                });
+
+                if (!response.ok) {
+                    const error = await response.json();
+                    throw new Error(error.error || 'Failed to save');
+                }
+
+                closeModal();
+                loadTable();
+                showStatus(editingId ? 'Record updated successfully!' : 'Record created successfully!', 'success');
+            } catch (error) {
+                showStatus('Error saving: ' + error.message, 'error');
+            }
+        }
+
+        async function deleteRecord(id) {
+            if (!confirm('Are you sure you want to delete this record?')) return;
+            
+            try {
+                const response = await fetch(`/api/${currentTable}/${id}`, { method: 'DELETE' });
+                if (!response.ok) {
+                    const error = await response.json();
+                    throw new Error(error.error || 'Failed to delete');
+                }
+                loadTable();
+                showStatus('Record deleted successfully!', 'success');
+            } catch (error) {
+                showStatus('Error deleting: ' + error.message, 'error');
+            }
+        }
+
+        async function importCSV() {
+            try {
+                showStatus('Importing CSV data...', 'info');
+                const response = await fetch('/api/import', { method: 'POST' });
+                const data = await response.json();
+                if (response.ok) {
+                    showStatus('CSV imported successfully!', 'success');
+                    loadTable();
+                } else {
+                    throw new Error(data.error || 'Import failed');
+                }
+            } catch (error) {
+                showStatus('Error importing: ' + error.message, 'error');
+            }
+        }
+
+        function showStatus(message, type) {
+            const el = document.getElementById('statusMessage');
+            el.textContent = message;
+            el.className = `mt-4 p-4 rounded-lg ${
+                type === 'success' ? 'bg-green-100 text-green-800' :
+                type === 'error' ? 'bg-red-100 text-red-800' :
+                'bg-blue-100 text-blue-800'
+            }`;
+            el.classList.remove('hidden');
+            setTimeout(() => el.classList.add('hidden'), 5000);
+        }
+
+        // Handle Enter key in search
+        document.getElementById('searchInput').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') searchTable();
+        });
+    </script>
+</body>
+</html>
